@@ -4,10 +4,12 @@ import { Config } from '../types/Config'
 import { StockResponse } from '../types/StockResponse'
 
 const mockQuoteSummary = vi.fn()
+const mockQuote = vi.fn()
 
 // Mocks must be called before imports
 vi.mock('yahoo-finance2', () => ({
   default: class YahooFinanceMock {
+    quote = mockQuote
     quoteSummary = mockQuoteSummary
   }
 }))
@@ -24,6 +26,7 @@ import JastBackendUtils from './JastBackendUtils'
 describe('JastBackendUtils', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockQuote.mockReset()
   })
 
   describe('requestStocks', () => {

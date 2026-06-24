@@ -1,5 +1,6 @@
 import * as Log from 'logger'
 import * as yahooFinance2Module from 'yahoo-finance2'
+import type { Quote } from 'yahoo-finance2/esm/src/modules/quote'
 import type { QuoteSummaryResult } from 'yahoo-finance2/esm/src/modules/quoteSummary'
 import { Config } from '../types/Config'
 import { StockResponse } from '../types/StockResponse'
@@ -9,14 +10,19 @@ import { StockResponse } from '../types/StockResponse'
 const YahooFinance = ('default' in yahooFinance2Module
   ? yahooFinance2Module.default
   : yahooFinance2Module) as unknown as new (options: { suppressNotices: string[] }) => {
+  quote: (symbol: string) => Promise<Quote>
   quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
 }
 
 let yahooFinanceClient:
-  | { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> }
+  | {
+      quote: (symbol: string) => Promise<Quote>
+      quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+    }
   | undefined
 
 const getYahooFinanceClient = (): {
+  quote: (symbol: string) => Promise<Quote>
   quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
 } => {
   if (!yahooFinanceClient) {
@@ -74,7 +80,10 @@ const isRetryableRequestError = (error: Error): boolean => {
 }
 
 const quoteSummaryWithRetry = async (
-  yahooFinance: { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> },
+  yahooFinance: {
+    quote: (symbol: string) => Promise<Quote>
+    quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+  },
   symbol: string
 ): Promise<QuoteSummaryResult> => {
   let lastError: Error | undefined
@@ -106,8 +115,81 @@ const quoteSummaryWithRetry = async (
   throw lastError ?? new Error(`API request for ${symbol} failed without a captured error.`)
 }
 
+const quoteWithRetry = async (
+  yahooFinance: {
+    quote: (symbol: string) => Promise<Quote>
+    quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+  },
+  symbol: string
+): Promise<Quote> => {
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      return await yahooFinance.quote(symbol)
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error
+      }
+
+      lastError = error
+
+      if (!isRetryableRequestError(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
+        throw error
+      }
+
+      await sleep(RETRY_DELAY_MS * attempt)
+    }
+  }
+
+  throw lastError ?? new Error(`Fallback quote request for ${symbol} failed without a captured error.`)
+}
+
+const mapQuoteToQuoteSummary = (quote: Quote): QuoteSummaryResult =>
+  ({
+    price: {
+      symbol: quote.symbol,
+      currency: quote.currency,
+      longName: quote.longName ?? quote.shortName,
+      regularMarketPrice: quote.regularMarketPrice,
+      regularMarketChange: quote.regularMarketChange,
+      regularMarketChangePercent: quote.regularMarketChangePercent,
+      regularMarketPreviousClose: quote.regularMarketPreviousClose,
+      regularMarketTime: quote.regularMarketTime
+    }
+  }) as QuoteSummaryResult
+
+const getQuoteDataWithFallback = async (
+  yahooFinance: {
+    quote: (symbol: string) => Promise<Quote>
+    quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+  },
+  symbol: string
+): Promise<QuoteSummaryResult> => {
+  try {
+    return await quoteSummaryWithRetry(yahooFinance, symbol)
+  } catch (error) {
+    if (!(error instanceof Error)) {
+      throw error
+    }
+
+    Log.warn(
+      `quoteSummary failed for ${symbol}, trying quote fallback: ${error.message}`,
+      getErrorCauseCode(error),
+      getErrorCauseMessage(error)
+    )
+
+    const quote = await quoteWithRetry(yahooFinance, symbol)
+
+    return mapQuoteToQuoteSummary(quote)
+  }
+}
+
 const requestStocksWithConcurrencyLimit = async (
-  yahooFinance: { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> },
+  yahooFinance: {
+    quote: (symbol: string) => Promise<Quote>
+    quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+  },
   symbols: string[]
 ): Promise<(QuoteSummaryResult | Error)[]> => {
   const responses: (QuoteSummaryResult | Error)[] = Array.from({ length: symbols.length })
@@ -119,7 +201,7 @@ const requestStocksWithConcurrencyLimit = async (
       nextIndex += 1
 
       try {
-        responses[currentIndex] = await quoteSummaryWithRetry(yahooFinance, symbols[currentIndex])
+        responses[currentIndex] = await getQuoteDataWithFallback(yahooFinance, symbols[currentIndex])
       } catch (error) {
         responses[currentIndex] = error instanceof Error ? error : new Error(String(error))
       }
