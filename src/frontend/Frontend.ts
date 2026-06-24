@@ -79,7 +79,8 @@ Module.register<Config>('MMM-Jast', {
   getTemplateData() {
     return {
       config: this.config,
-      stocks: this.state?.stocks,
+      stocks: this.state?.stocks ?? [],
+      hasLoaded: Boolean(this.state),
       lastUpdate: formatDate(this.state?.lastUpdate ?? Date.now(), this.config.lastUpdateFormat),
       utils: Utils
     }

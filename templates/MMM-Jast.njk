@@ -18,7 +18,13 @@
     </div>
   {% endif %}
 {% else %}
+  {% if hasLoaded %}
+    <div class="dimmed light small">
+      No data available
+    </div>
+  {% else %}
     <div class="dimmed light small">
       {{ "LOADING" | translate | safe }}
     </div>
+  {% endif %}
 {% endif %}

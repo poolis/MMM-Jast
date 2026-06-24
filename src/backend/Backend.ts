@@ -3,14 +3,7 @@ import * as Log from 'logger'
 import { State } from '../types/State'
 import JastBackendUtils from './JastBackendUtils'
 
-const sanityFields = [
-  'regularMarketChange',
-  'regularMarketChangePercent',
-  'regularMarketPrice',
-  'currency',
-  'longName',
-  'regularMarketPreviousClose'
-]
+const sanityFields = ['regularMarketPrice', 'currency']
 
 module.exports = NodeHelper.create({
   start() {
