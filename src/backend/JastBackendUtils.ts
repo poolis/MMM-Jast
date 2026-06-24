@@ -35,6 +35,23 @@ const getYahooFinanceClient = (): {
 const MAX_REQUEST_ATTEMPTS = 2
 const RETRY_DELAY_MS = 750
 const MAX_CONCURRENT_REQUESTS = 2
+const DIRECT_QUOTE_TIMEOUT_MS = 10000
+
+interface DirectQuoteApiResponse {
+  quoteResponse?: {
+    result?: {
+      symbol?: string
+      currency?: string
+      longName?: string
+      shortName?: string
+      regularMarketPrice?: number
+      regularMarketChange?: number
+      regularMarketChangePercent?: number
+      regularMarketPreviousClose?: number
+      regularMarketTime?: number
+    }[]
+  }
+}
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -145,6 +162,66 @@ const quoteWithRetry = async (
   throw lastError ?? new Error(`Fallback quote request for ${symbol} failed without a captured error.`)
 }
 
+const directQuoteRequest = async (symbol: string): Promise<QuoteSummaryResult> => {
+  const endpoint = `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(symbol)}`
+  const response = await fetch(endpoint, {
+    signal: AbortSignal.timeout(DIRECT_QUOTE_TIMEOUT_MS),
+    headers: {
+      Accept: 'application/json',
+      'User-Agent': 'MMM-Jast/2.x'
+    }
+  })
+
+  if (!response.ok) {
+    throw new Error(`Direct quote request for ${symbol} failed with status ${response.status}.`)
+  }
+
+  const payload = (await response.json()) as DirectQuoteApiResponse
+  const quote = payload.quoteResponse?.result?.[0]
+
+  if (!quote || typeof quote.regularMarketPrice !== 'number' || !quote.currency) {
+    throw new Error(`Direct quote response for ${symbol} did not include required market fields.`)
+  }
+
+  return {
+    price: {
+      symbol: quote.symbol ?? symbol,
+      currency: quote.currency,
+      longName: quote.longName ?? quote.shortName,
+      regularMarketPrice: quote.regularMarketPrice,
+      regularMarketChange: quote.regularMarketChange,
+      regularMarketChangePercent: quote.regularMarketChangePercent,
+      regularMarketPreviousClose: quote.regularMarketPreviousClose,
+      regularMarketTime:
+        typeof quote.regularMarketTime === 'number' ? new Date(quote.regularMarketTime * 1000).toISOString() : undefined
+    }
+  } as QuoteSummaryResult
+}
+
+const directQuoteWithRetry = async (symbol: string): Promise<QuoteSummaryResult> => {
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      return await directQuoteRequest(symbol)
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error
+      }
+
+      lastError = error
+
+      if (!isRetryableRequestError(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
+        throw error
+      }
+
+      await sleep(RETRY_DELAY_MS * attempt)
+    }
+  }
+
+  throw lastError ?? new Error(`Direct quote fallback for ${symbol} failed without a captured error.`)
+}
+
 const mapQuoteToQuoteSummary = (quote: Quote): QuoteSummaryResult =>
   ({
     price: {
@@ -168,20 +245,48 @@ const getQuoteDataWithFallback = async (
 ): Promise<QuoteSummaryResult> => {
   try {
     return await quoteSummaryWithRetry(yahooFinance, symbol)
-  } catch (error) {
-    if (!(error instanceof Error)) {
-      throw error
+  } catch (summaryError) {
+    if (!(summaryError instanceof Error)) {
+      throw summaryError
     }
 
     Log.warn(
-      `quoteSummary failed for ${symbol}, trying quote fallback: ${error.message}`,
-      getErrorCauseCode(error),
-      getErrorCauseMessage(error)
+      `quoteSummary failed for ${symbol}, trying direct quote API fallback: ${summaryError.message}`,
+      getErrorCauseCode(summaryError),
+      getErrorCauseMessage(summaryError)
     )
 
-    const quote = await quoteWithRetry(yahooFinance, symbol)
+    try {
+      return await directQuoteWithRetry(symbol)
+    } catch (directError) {
+      if (!(directError instanceof Error)) {
+        throw directError
+      }
 
-    return mapQuoteToQuoteSummary(quote)
+      Log.warn(
+        `Direct quote API fallback failed for ${symbol}, trying yahoo-finance quote fallback: ${directError.message}`,
+        getErrorCauseCode(directError),
+        getErrorCauseMessage(directError)
+      )
+    }
+
+    try {
+      const quote = await quoteWithRetry(yahooFinance, symbol)
+
+      return mapQuoteToQuoteSummary(quote)
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error
+      }
+
+      Log.warn(
+        `quote fallback failed for ${symbol} after quoteSummary/direct failures: ${error.message}`,
+        getErrorCauseCode(error),
+        getErrorCauseMessage(error)
+      )
+
+      throw error
+    }
   }
 }
 
