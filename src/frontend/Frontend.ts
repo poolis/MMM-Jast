@@ -25,6 +25,7 @@ Module.register<Config>('MMM-Jast', {
   defaults: {
     currencyStyle: 'code',
     fadeSpeedInSeconds: 3.5,
+    initialLoadDelayInSeconds: 0,
     lastUpdateFormat: 'HH:mm',
     locale: config.locale || 'en-GB',
     maxChangeAge: 1 * 24 * 60 * 60 * 1000,
@@ -47,6 +48,7 @@ Module.register<Config>('MMM-Jast', {
     showStockPerformanceValue: false,
     showStockPerformanceValueSum: false,
     showStockPerformancePercent: false,
+    refreshJitterInSeconds: 0,
     updateIntervalInSeconds: 600,
     useGrouping: false,
     virtualHorizontalMultiplier: 2,
@@ -88,17 +90,27 @@ Module.register<Config>('MMM-Jast', {
       Log.warn("MMM-JAST config property 'scroll' is deprecated. Please use displayMode instead.")
       this.config.displayMode = this.config.scroll
     }
-    this.loadData()
     this.scheduleUpdate()
     this.updateDom()
   },
 
   scheduleUpdate() {
-    this.config.updateIntervalInSeconds =
-      this.config.updateIntervalInSeconds < 120 ? 120 : this.config.updateIntervalInSeconds
-    setInterval(() => {
+    const minInterval = this.config.updateIntervalInSeconds < 120 ? 120 : this.config.updateIntervalInSeconds
+    const getJitterMs = () => Math.floor(Math.max(0, this.config.refreshJitterInSeconds ?? 0) * 1000 * Math.random())
+    const scheduleNext = () =>
+      setTimeout(
+        () => {
+          this.loadData()
+          scheduleNext()
+        },
+        minInterval * 1000 + getJitterMs()
+      )
+
+    const initialDelayMs = Math.max(0, this.config.initialLoadDelayInSeconds ?? 0) * 1000 + getJitterMs()
+    setTimeout(() => {
       this.loadData()
-    }, this.config.updateIntervalInSeconds * 1000)
+      scheduleNext()
+    }, initialDelayMs)
   },
 
   loadData() {

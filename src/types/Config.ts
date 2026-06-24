@@ -1,6 +1,7 @@
 export interface Config {
   currencyStyle: 'symbol' | 'code' | 'name'
   fadeSpeedInSeconds: number
+  initialLoadDelayInSeconds: number
   lastUpdateFormat: string
   locale: string
   maxChangeAge: number
@@ -24,6 +25,7 @@ export interface Config {
   showStockPerformanceValue: boolean
   showStockPerformanceValueSum: boolean
   showStockPerformancePercent: boolean
+  refreshJitterInSeconds: number
   stocks: Stock[]
   stocksPerPage: number
   updateIntervalInSeconds: number

@@ -19,6 +19,7 @@ describe('JastFrontendUtils', () => {
     baseConfig = {
       currencyStyle: 'symbol',
       fadeSpeedInSeconds: 1,
+      initialLoadDelayInSeconds: 0,
       lastUpdateFormat: 'HH:mm',
       locale: 'en-US',
       maxChangeAge: 0,
@@ -41,6 +42,7 @@ describe('JastFrontendUtils', () => {
       showStockPerformanceValue: true,
       showStockPerformanceValueSum: true,
       showStockPerformancePercent: true,
+      refreshJitterInSeconds: 0,
       stocks: [],
       stocksPerPage: 10,
       updateIntervalInSeconds: 300,

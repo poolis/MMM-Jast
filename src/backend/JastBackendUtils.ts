@@ -12,21 +12,141 @@ const YahooFinance = ('default' in yahooFinance2Module
   quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
 }
 
+let yahooFinanceClient:
+  | { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> }
+  | undefined
+
+const getYahooFinanceClient = (): {
+  quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult>
+} => {
+  if (!yahooFinanceClient) {
+    yahooFinanceClient = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
+  }
+
+  return yahooFinanceClient
+}
+
+const MAX_REQUEST_ATTEMPTS = 2
+const RETRY_DELAY_MS = 750
+const MAX_CONCURRENT_REQUESTS = 2
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+
+const getErrorCauseCode = (error: Error): string => {
+  const cause = (error as Error & { cause?: { code?: unknown } }).cause
+
+  return typeof cause?.code === 'string' ? cause.code : ''
+}
+
+const getErrorCauseMessage = (error: Error): string => {
+  const cause = (error as Error & { cause?: { message?: unknown } }).cause
+
+  return typeof cause?.message === 'string' ? cause.message : ''
+}
+
+const isRetryableRequestError = (error: Error): boolean => {
+  const code = getErrorCauseCode(error)
+  const message = error.message.toLowerCase()
+
+  if (
+    [
+      'ECONNRESET',
+      'ECONNREFUSED',
+      'ETIMEDOUT',
+      'UND_ERR_CONNECT_TIMEOUT',
+      'UND_ERR_SOCKET',
+      'ENOTFOUND',
+      'EAI_AGAIN'
+    ].includes(code)
+  ) {
+    return true
+  }
+
+  return (
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    message.includes('socket') ||
+    message.includes('timed out')
+  )
+}
+
+const quoteSummaryWithRetry = async (
+  yahooFinance: { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> },
+  symbol: string
+): Promise<QuoteSummaryResult> => {
+  let lastError: Error | undefined
+
+  for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    try {
+      return await yahooFinance.quoteSummary(symbol, { modules: ['price'] })
+    } catch (error) {
+      if (!(error instanceof Error)) {
+        throw error
+      }
+
+      lastError = error
+
+      if (!isRetryableRequestError(error) || attempt >= MAX_REQUEST_ATTEMPTS) {
+        throw error
+      }
+
+      Log.warn(
+        `Transient API request issue for ${symbol}, retrying: ${error.message}`,
+        getErrorCauseCode(error),
+        getErrorCauseMessage(error)
+      )
+
+      await sleep(RETRY_DELAY_MS * attempt)
+    }
+  }
+
+  throw lastError ?? new Error(`API request for ${symbol} failed without a captured error.`)
+}
+
+const requestStocksWithConcurrencyLimit = async (
+  yahooFinance: { quoteSummary: (symbol: string, options: { modules: string[] }) => Promise<QuoteSummaryResult> },
+  symbols: string[]
+): Promise<(QuoteSummaryResult | Error)[]> => {
+  const responses: (QuoteSummaryResult | Error)[] = Array.from({ length: symbols.length })
+  let nextIndex = 0
+
+  const runWorker = async (): Promise<void> => {
+    while (nextIndex < symbols.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+
+      try {
+        responses[currentIndex] = await quoteSummaryWithRetry(yahooFinance, symbols[currentIndex])
+      } catch (error) {
+        responses[currentIndex] = error instanceof Error ? error : new Error(String(error))
+      }
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(MAX_CONCURRENT_REQUESTS, symbols.length))
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()))
+
+  return responses
+}
+
 const JastBackendUtils = {
   async requestStocks(config: Config): Promise<StockResponse[]> {
-    const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
+    const yahooFinance = getYahooFinanceClient()
     const stocks = []
-    const promises: Promise<QuoteSummaryResult>[] = []
-
-    for (const stock of config.stocks) {
-      promises.push(yahooFinance.quoteSummary(stock.symbol, { modules: ['price'] }))
-    }
-
-    const apiResponses = await Promise.all(promises.map((p) => p.catch((e) => e)))
+    const symbols = config.stocks.map((stock) => stock.symbol)
+    const apiResponses = await requestStocksWithConcurrencyLimit(yahooFinance, symbols)
 
     for (const [index, response] of apiResponses.entries()) {
       if (response instanceof Error) {
-        Log.warn(`API request for ${config.stocks[index].symbol} failed:`, response.message)
+        Log.warn(
+          `API request for ${config.stocks[index].symbol} failed:`,
+          response.message,
+          getErrorCauseCode(response),
+          getErrorCauseMessage(response)
+        )
       } else if (response.price) {
         const meta = {
           symbol: config.stocks[index].symbol,
@@ -37,8 +157,12 @@ const JastBackendUtils = {
         }
         // Manually convert GBp to GBP
         if (response.price.currency === 'GBp') {
-          response.price.regularMarketPrice /= 100
-          response.price.regularMarketChange /= 100
+          if (typeof response.price.regularMarketPrice === 'number') {
+            response.price.regularMarketPrice /= 100
+          }
+          if (typeof response.price.regularMarketChange === 'number') {
+            response.price.regularMarketChange /= 100
+          }
           response.price.currency = 'GBP'
         }
 
@@ -46,7 +170,13 @@ const JastBackendUtils = {
         if (config.maxChangeAge > 0) {
           const maxChangeAge = new Date().getTime() - config.maxChangeAge
           try {
-            const lastChange = Date.parse(response.price.regularMarketTime)
+            const marketTime = response.price.regularMarketTime
+            const lastChange =
+              marketTime instanceof Date
+                ? marketTime.getTime()
+                : typeof marketTime === 'string'
+                  ? Date.parse(marketTime)
+                  : Number.NaN
 
             if (maxChangeAge > lastChange) {
               response.price.regularMarketPreviousClose = response.price?.regularMarketPrice

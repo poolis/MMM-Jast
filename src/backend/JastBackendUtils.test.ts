@@ -30,6 +30,7 @@ describe('JastBackendUtils', () => {
     const mockConfig: Config = {
       currencyStyle: 'symbol',
       fadeSpeedInSeconds: 1,
+      initialLoadDelayInSeconds: 0,
       lastUpdateFormat: 'HH:mm',
       locale: 'en-US',
       maxChangeAge: 0,
@@ -52,6 +53,7 @@ describe('JastBackendUtils', () => {
       showStockPerformanceValue: true,
       showStockPerformanceValueSum: true,
       showStockPerformancePercent: true,
+      refreshJitterInSeconds: 0,
       stocks: [
         {
           symbol: 'AAPL',

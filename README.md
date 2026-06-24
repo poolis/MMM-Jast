@@ -115,6 +115,8 @@ Add the module configuration into the `MagicMirror/config/config.js` file (sampl
     showStockPerformanceValueSum: false,
     showStockPerformancePercent: false,
     stocksPerPage: 2, // Only relevant for display mode "table"
+    initialLoadDelayInSeconds: 20,
+    refreshJitterInSeconds: 30,
     updateIntervalInSeconds: 300,
     useGrouping: false,
     virtualHorizontalMultiplier: 2,
@@ -157,6 +159,8 @@ Add the module configuration into the `MagicMirror/config/config.js` file (sampl
 | `showStockPerformanceValueSum`    | Show performance against purchase price value in total. <br><br>**Type:** `Boolean`<br> **Default value:** `false`                                                                           |
 | `showStockPerformancePercent`     | Show performance against purchase price in percent. <br><br>**Type:** `Boolean`<br> **Default value:** `false`                                                                               |
 | `stocksPerPage`                   | Specifies how many stocks are displayed per page on table display mode. <br><br>**Type:** `number`<br> **Default value:** `2`                                                                |
+| `initialLoadDelayInSeconds`       | Delay before first data request after module starts. Helpful to avoid startup request spikes across modules. <br><br>**Type:** `Number`<br> **Default value:** `0`                           |
+| `refreshJitterInSeconds`          | Adds random jitter to each refresh cycle in addition to `updateIntervalInSeconds`. Helpful to avoid synchronized fetch bursts. <br><br>**Type:** `Number`<br> **Default value:** `0`         |
 | `updateIntervalInSeconds`         | Interval to refresh stock data from server. (min. 120) <br><br>**Type:** `Number`<br> **Default value:** `600` (10 min)                                                                      |
 | `useGrouping`                     | Add grouping to high value numbers (i.e. BTC 60,000.00 EUR). <br><br>**Type:** `Boolean`<br> **Default value:** `false`                                                                      |
 | `virtualHorizontalMultiplier`     | Virtually repeats the stocklist in horizontal display mode to avoid whitespaces. <br><br>**Type:** `Number`<br> **Default value:** `2`                                                       |
