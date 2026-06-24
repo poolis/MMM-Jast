@@ -11,8 +11,15 @@ module.exports = NodeHelper.create({
   },
 
   async socketNotificationReceived(notification, payload) {
-    if (notification.includes('JAST_STOCKS_REQUEST')) {
-      const identifier = notification.substring('JAST_STOCKS_REQUEST'.length + 1)
+    if (!notification.includes('JAST_STOCKS_REQUEST')) {
+      Log.warn(`${notification} is invalid notification`)
+
+      return
+    }
+
+    const identifier = notification.substring('JAST_STOCKS_REQUEST'.length + 1)
+
+    try {
       let stocks = await JastBackendUtils.requestStocks(payload)
 
       stocks = stocks.filter((stock) =>
@@ -34,8 +41,15 @@ module.exports = NodeHelper.create({
       }
 
       this.sendSocketNotification(`JAST_STOCKS_RESPONSE-${identifier}`, response)
-    } else {
-      Log.warn(`${notification} is invalid notification`)
+    } catch (error) {
+      Log.error('MMM-Jast request handling failed', error)
+
+      const response: State = {
+        lastUpdate: Date.now(),
+        stocks: []
+      }
+
+      this.sendSocketNotification(`JAST_STOCKS_RESPONSE-${identifier}`, response)
     }
   }
 })
